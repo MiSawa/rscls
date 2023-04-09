@@ -2,8 +2,12 @@
 name = "rscls"
 version = "0.1.0"
 edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+authors = ["mi_sawa <mi.sawa.1216+git@gmail.com>"]
+description = "A language server for rust-script"
+license = "MIT/Apache-2.0"
+repository = "https://github.com/MiSawa/rscls"
+readme = "README.md"
+exclude = [".github", "release.toml"]
 
 [dependencies]
 clap = { version = "4.1.8", features = ["derive"] }
