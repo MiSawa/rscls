@@ -1,3 +1,5 @@
+[![crates.io](https://img.shields.io/crates/v/rscls.svg)](https://crates.io/crates/rscls)
+
 # RSCLS
 A **proof-of-concept** [language server](https://microsoft.github.io/language-server-protocol/) for [rust-script](https://rust-script.org/).
 
