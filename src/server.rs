@@ -43,7 +43,7 @@ impl Server {
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .spawn()
-            .wrap_err("Failed to sapwn the server")?;
+            .wrap_err("failed to sapwn the server")?;
 
         let (sender, sender_rcv) = sync_channel(0);
 
@@ -68,7 +68,7 @@ impl Server {
 fn redirect_log(sender: EventSender, child_log: std::process::ChildStderr) -> Result<()> {
     let lines = BufReader::new(child_log).lines();
     for line in lines {
-        let line = line.wrap_err("Failed to read log of language server")?;
+        let line = line.wrap_err("failed to read log of language server")?;
         sender.send(Event::ServerLog(line)).ok();
     }
     Ok(())
@@ -80,14 +80,14 @@ fn redirect_send(receiver: Receiver<Message>, stdin: std::process::ChildStdin) -
     receiver
         .into_iter()
         .try_for_each(|it| it.write(&mut writer))
-        .wrap_err("Failed to write message to server")
+        .wrap_err("failed to write message to server")
 }
 
 #[instrument(skip_all)]
 fn redirect_receive(sender: EventSender, stdout: std::process::ChildStdout) -> Result<()> {
     let mut reader = BufReader::new(stdout);
     while let Some(msg) =
-        Message::read(&mut reader).wrap_err("Failed to read message from client (stdin)")?
+        Message::read(&mut reader).wrap_err("failed to read message from client (stdin)")?
     {
         sender.send(Event::ServerToClient(msg)).unwrap();
     }

@@ -65,7 +65,8 @@ fn main() -> Result<()> {
     tracing::debug!(?args);
 
     let script =
-        script::Script::new(args.rust_script, args.script).wrap_err("Failed to scriptize")?;
+        script::Script::new(args.rust_script, args.script).wrap_err("failed to scriptize")?;
+    script.regenerate().wrap_err("failed to generate package")?;
 
     let (event_sender, event_receiver) = event::new_event_bus();
 
@@ -76,7 +77,7 @@ fn main() -> Result<()> {
         args.rust_analyzer,
         args.rust_analyzer_args,
     )
-    .wrap_err("Failed to spawn {args.rust_analyzer}")?;
+    .wrap_err("failed to spawn server")?;
 
     let mut requests_from_client = HashMap::new();
     let mut requests_from_server = HashMap::new();
@@ -96,6 +97,7 @@ fn main() -> Result<()> {
                         handle::<Initialize>(request, &mut context);
                         handle::<WillSaveWaitUntil>(request, &mut context);
                         handle::<GotoDeclaration>(request, &mut context);
+                        handle::<GotoDefinition>(request, &mut context);
                         handle::<GotoTypeDefinition>(request, &mut context);
                         handle::<GotoImplementation>(request, &mut context);
                         handle::<References>(request, &mut context);
@@ -212,6 +214,7 @@ fn main() -> Result<()> {
                         handle::<Initialize>(&request, response, &mut context);
                         handle::<WillSaveWaitUntil>(&request, response, &mut context);
                         handle::<GotoDeclaration>(&request, response, &mut context);
+                        handle::<GotoDefinition>(&request, response, &mut context);
                         handle::<GotoTypeDefinition>(&request, response, &mut context);
                         handle::<GotoImplementation>(&request, response, &mut context);
                         handle::<References>(&request, response, &mut context);

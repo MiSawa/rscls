@@ -494,8 +494,17 @@ impl ToDo for lsp_types::PartialResultParams {
 }
 
 impl ClientToServerRequest for lsp_types::request::Initialize {
-    fn handle_client_to_server_request(_params: &mut Self::Params, _context: &mut Context) {
+    fn handle_client_to_server_request(params: &mut Self::Params, context: &mut Context) {
         // TODO: Tweak client capabilities
+        params
+            .root_uri
+            .iter_mut()
+            .for_each(|uri| uri.handle_client_to_server(context));
+        params
+            .workspace_folders
+            .iter_mut()
+            .flat_map(|v| v.iter_mut())
+            .for_each(|folder| folder.uri.handle_client_to_server(context));
     }
 
     fn handle_server_to_client_response(
@@ -551,6 +560,33 @@ impl ClientToServerNotification for lsp_types::notification::DidCloseTextDocumen
 }
 
 impl ClientToServerRequest for lsp_types::request::GotoDeclaration {
+    fn handle_client_to_server_request(params: &mut Self::Params, context: &mut Context) {
+        // TODO: Handle partial result
+        params.text_document_position_params.handle(context)
+    }
+
+    fn handle_server_to_client_response(
+        _params: &Self::Params,
+        result: &mut Self::Result,
+        context: &mut Context,
+    ) {
+        if let Some(result) = result {
+            match result {
+                lsp_types::GotoDefinitionResponse::Scalar(ref mut location) => {
+                    location.handle_server_to_client(context)
+                }
+                lsp_types::GotoDefinitionResponse::Array(locations) => locations
+                    .iter_mut()
+                    .for_each(|location| location.handle_server_to_client(context)),
+                lsp_types::GotoDefinitionResponse::Link(links) => {
+                    links.iter_mut().for_each(|link| link.handle(context))
+                }
+            }
+        }
+    }
+}
+
+impl ClientToServerRequest for lsp_types::request::GotoDefinition {
     fn handle_client_to_server_request(params: &mut Self::Params, context: &mut Context) {
         // TODO: Handle partial result
         params.text_document_position_params.handle(context)
@@ -1147,17 +1183,31 @@ impl ServerToClientRequest for lsp_types::request::WorkspaceFoldersRequest {
 
     fn handle_client_to_server_response(
         _params: &Self::Params,
-        _result: &mut Self::Result,
-        _context: &mut Context,
+        result: &mut Self::Result,
+        context: &mut Context,
     ) {
         // TODO: Change how workspace folders are configured?
         // or disable it with client capability?
+        result
+            .iter_mut()
+            .flat_map(|v| v.iter_mut())
+            .for_each(|f| f.uri.handle_client_to_server(context))
     }
 }
 impl ClientToServerNotification for lsp_types::notification::DidChangeWorkspaceFolders {
-    fn handle_client_to_server_notification(_params: &mut Self::Params, _context: &mut Context) {
+    fn handle_client_to_server_notification(params: &mut Self::Params, context: &mut Context) {
         // TODO: Change how workspace folders are configured?
         // or disable it with client capability?
+        params
+            .event
+            .added
+            .iter_mut()
+            .for_each(|f| f.uri.handle_client_to_server(context));
+        params
+            .event
+            .removed
+            .iter_mut()
+            .for_each(|f| f.uri.handle_client_to_server(context));
     }
 }
 impl ClientToServerRequest for lsp_types::request::WillCreateFiles {

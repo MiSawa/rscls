@@ -79,5 +79,5 @@ fn package_dir(rust_script: impl AsRef<Path>, script: impl AsRef<Path>) -> Resul
         output.status
     );
     let output = String::from_utf8(output.stdout).wrap_err("got an invalid path")?;
-    Ok(PathBuf::from(output))
+    Ok(PathBuf::from(output.trim_end()))
 }

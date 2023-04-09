@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use lsp_types::Url;
 
 use crate::script::Script;
@@ -20,6 +22,11 @@ impl<'a> Context<'a> {
                 uri.set_path(new_path);
             }
         }
+        if Some(uri.path()) == self.script.script().parent().and_then(Path::to_str) {
+            if let Some(new_path) = self.script.package_dir().to_str() {
+                uri.set_path(new_path);
+            }
+        }
     }
     pub fn translate_server_uri_to_client_uri(&self, uri: &mut Url) {
         if uri.scheme() != "file" {
@@ -27,6 +34,11 @@ impl<'a> Context<'a> {
         }
         if Some(uri.path()) == self.script.source_in_package().to_str() {
             if let Some(new_path) = self.script.script().to_str() {
+                uri.set_path(new_path);
+            }
+        }
+        if Some(uri.path()) == self.script.package_dir().to_str() {
+            if let Some(new_path) = self.script.script().parent().and_then(Path::to_str) {
                 uri.set_path(new_path);
             }
         }
