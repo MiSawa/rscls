@@ -1,7 +1,6 @@
 use std::{
     ffi::OsStr,
     io::{BufRead, BufReader, BufWriter},
-    path::Path,
     sync::mpsc::{sync_channel, Receiver, SyncSender},
 };
 
@@ -30,15 +29,8 @@ impl Drop for ChildGuard {
 }
 
 impl Server {
-    pub fn spawn<S: AsRef<OsStr>, I: IntoIterator<Item = S>>(
-        event_sender: EventSender,
-        current_dir: impl AsRef<Path>,
-        path: impl AsRef<OsStr>,
-        args: I,
-    ) -> Result<Self> {
+    pub fn spawn(event_sender: EventSender, path: impl AsRef<OsStr>) -> Result<Self> {
         let mut process = std::process::Command::new(path)
-            .args(args)
-            .current_dir(current_dir)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
