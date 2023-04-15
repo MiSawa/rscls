@@ -99,7 +99,8 @@ fn modify_config(opts: &mut Value, rust_projects: Vec<Value>) {
     }
 }
 
-fn rewrite_script_uri_to_project_uri(scripts: &Scripts, uri: &mut lsp_types::Url) {}
+// TODO: translate actions for diagnostics?
+// fn rewrite_script_uri_to_project_uri(scripts: &Scripts, uri: &mut lsp_types::Url) {}
 fn rewrite_project_uri_to_script_uri(scripts: &Scripts, uri: &mut lsp_types::Url) {
     if let Ok(file) = uri.to_file_path() {
         if let Some(new_file) = scripts.project_path_to_script_path(file) {

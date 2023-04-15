@@ -11,43 +11,50 @@ use serde::Serialize;
 
 #[derive(Serialize, Debug, PartialEq, Eq)]
 pub struct RustProject {
-    sysroot: PathBuf,
-    sysroot_src: PathBuf,
-    crates: Vec<Crate>,
+    pub sysroot: PathBuf,
+    pub sysroot_src: PathBuf,
+    pub crates: Vec<Crate>,
 }
 
 #[derive(Serialize, Debug, PartialEq, Eq)]
-struct Crate {
+pub struct Crate {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(default)]
-    display_name: Option<String>,
-    root_module: PathBuf,
+    pub display_name: Option<String>,
+    pub root_module: PathBuf,
     #[serde(serialize_with = "serialize_edition")]
-    edition: Edition,
+    pub edition: Edition,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(default)]
-    version: Option<String>,
-    deps: Vec<Dep>,
+    pub version: Option<String>,
+    pub deps: Vec<Dep>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     #[serde(default)]
-    cfg: Vec<String>,
+    pub cfg: Vec<String>,
 
-    is_proc_macro: bool,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
+    pub include: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
+    pub exclude: Vec<String>,
+
+    pub is_proc_macro: bool,
 
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(default)]
-    proc_macro_dylib_path: Option<PathBuf>,
+    pub proc_macro_dylib_path: Option<PathBuf>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(default)]
-    repository: Option<String>,
+    pub repository: Option<String>,
 }
 
 #[derive(Serialize, Debug, PartialEq, Eq)]
-struct Dep {
+pub struct Dep {
     #[serde(rename = "crate")]
-    krate: usize,
-    name: String,
+    pub krate: usize,
+    pub name: String,
 }
 
 static CFG_KEYS_TO_IGNORE: Lazy<HashSet<&'static str>> = Lazy::new(|| {
@@ -93,6 +100,8 @@ impl RustProject {
             version: None,
             deps: vec![],
             cfg: vec![],
+            include: vec![],
+            exclude: vec![],
             is_proc_macro: false,
             proc_macro_dylib_path: None,
             repository: None,
@@ -184,6 +193,8 @@ impl RustProject {
                     version: data.version.clone(),
                     deps,
                     cfg,
+                    include: vec![],
+                    exclude: vec![],
                     is_proc_macro: data.is_proc_macro,
                     proc_macro_dylib_path,
                     repository,

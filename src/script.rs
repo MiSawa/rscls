@@ -9,13 +9,13 @@ use std::{
     },
 };
 
-use eyre::{bail, ensure, eyre, Result, WrapErr as _};
+use eyre::{ensure, eyre, Result, WrapErr as _};
 use path_absolutize::Absolutize as _;
 use paths::{AbsPath, AbsPathBuf};
 use project_model::{CargoConfig, ProjectManifest, ProjectWorkspace, RustLibSource, Sysroot};
 use serde::Serialize;
 use serde_json::Value;
-use tempfile::{NamedTempFile, TempDir};
+use tempfile::NamedTempFile;
 
 use crate::{event::EventSender, rust_project::RustProject};
 
@@ -98,13 +98,18 @@ impl Script {
                     .to_owned();
                 project_source_file_name.push(".rs");
                 let project_source = project_dir.join(project_source_file_name);
-                let project = RustProject::from_workspace(&sysroot, &workspace, |path| {
+                let mut project = RustProject::from_workspace(&sysroot, &workspace, |path| {
                     if path == project_source.as_path() {
                         this.source.clone()
                     } else {
                         path.to_path_buf()
                     }
                 });
+                for krate in project.crates.iter_mut() {
+                    if krate.root_module == this.source.as_path().as_ref() {
+                        krate.include.push(format!("{}", project_dir.display()));
+                    }
+                }
                 let mut project_write = this.project.write().unwrap();
                 if project_write.as_rust_project() != &project {
                     // let project_temp_dir =
@@ -231,13 +236,15 @@ fn package_dir(rust_script: impl AsRef<Path>, script: impl AsRef<Path>) -> Resul
 }
 
 fn load_workspace(sysroot: &Sysroot, project_dir: impl AsRef<AbsPath>) -> Result<ProjectWorkspace> {
-    let ProjectManifest::CargoToml(manifest_path) = ProjectManifest::from_manifest_file(project_dir.as_ref().join("Cargo.toml"))
-        .map_err(|e| eyre!("unable to obtain manifest path: {e:?}"))? else {
-            bail!("project manifest wasn't Cargo.toml");
-        };
+    let manifest = ProjectManifest::from_manifest_file(project_dir.as_ref().join("Cargo.toml"))
+        .map_err(|e| eyre!("unable to obtain manifest path: {e:?}"))?;
+    eyre::ensure!(
+        matches!(manifest, ProjectManifest::CargoToml(_)),
+        "project manifest wasn't Cargo.toml"
+    );
     let mut config = CargoConfig::default();
     config.sysroot = Some(RustLibSource::Path(sysroot.root().to_path_buf()));
     config.rustc_source = Some(RustLibSource::Discover);
-    ProjectWorkspace::load(ProjectManifest::CargoToml(manifest_path), &config, &|_| ())
+    ProjectWorkspace::load(manifest, &config, &|_| ())
         .map_err(|e| eyre!("unable to load workspace: {e:?}"))
 }
