@@ -3,8 +3,11 @@ use std::{collections::HashMap, fs::OpenOptions, path::PathBuf};
 use clap::Parser;
 use eyre::{eyre, Result, WrapErr as _};
 use lsp_server::Message;
-use lsp_types::{notification, request};
-use serde_json::Value;
+use lsp_types::{
+    notification::{self, Notification as _},
+    request,
+};
+use serde_json::{json, Value};
 use verbosity::Verbosity;
 
 use crate::{
@@ -17,7 +20,6 @@ use crate::{
 mod client;
 mod event;
 mod handler;
-mod rust_project;
 mod script;
 mod server;
 mod verbosity;
@@ -59,55 +61,18 @@ fn init_tracing_subscriber(args: &Args) {
     }
 }
 
-fn modify_config(opts: &mut Value, rust_projects: Vec<Value>) {
+fn modify_config(opts: &mut Value, mut rust_projects: Vec<Value>) {
     if opts.is_null() {
-        *opts = serde_json::json!({});
+        *opts = json!({});
     }
-    if let Some(ra) = opts.as_object_mut() {
+    if let Some(opts) = opts.as_object_mut() {
         if rust_projects.is_empty() {
-            if let Some(files) = ra
-                .entry("files")
-                .or_insert_with(|| serde_json::json!({}))
-                .as_object_mut()
-            {
-                if let Some(exclude_dirs) = files
-                    .entry("excludeDirs")
-                    .or_insert_with(|| serde_json::json!([]))
-                    .as_array_mut()
-                {
-                    exclude_dirs.push("./".into());
-                }
-            }
+            // Push a dummy project to prevent rust-analyzer from complaining missing projects.
+            rust_projects.push(json!({
+                "crates": []
+            }))
         }
-        if let Some(check) = ra
-            .entry("check")
-            .or_insert_with(|| serde_json::json!({}))
-            .as_object_mut()
-        {
-            check.insert(
-                "overrideCommand".to_owned(),
-                serde_json::json!([
-                    "cargo",
-                    "check",
-                    "--workspace",
-                    "--message-format=json",
-                    "--all-targets"
-                ]),
-            );
-        }
-        ra.insert("linkedProjects".to_owned(), Value::Array(rust_projects));
-    }
-}
-
-// TODO: translate actions for diagnostics?
-// fn rewrite_script_uri_to_project_uri(scripts: &Scripts, uri: &mut lsp_types::Url) {}
-fn rewrite_project_uri_to_script_uri(scripts: &Scripts, uri: &mut lsp_types::Url) {
-    if let Ok(file) = uri.to_file_path() {
-        if let Some(new_file) = scripts.project_path_to_script_path(file) {
-            if let Ok(new_uri) = lsp_types::Url::from_file_path(new_file) {
-                *uri = new_uri;
-            }
-        }
+        opts.insert("linkedProjects".to_owned(), Value::Array(rust_projects));
     }
 }
 
@@ -135,10 +100,11 @@ fn main() -> Result<()> {
                         handle_request::<request::Initialize>(request, |params| {
                             let opts = params
                                 .initialization_options
-                                .get_or_insert_with(|| serde_json::json!({}));
+                                .get_or_insert_with(|| json!({}));
                             current_version = event_sender.start_reload();
                             modify_config(opts, scripts.projects())
                         });
+                        // TODO: More, especially rust-analyzer extra methods.
                     }
                     Message::Response(ref mut response) => {
                         let request = requests_from_server
@@ -150,11 +116,9 @@ fn main() -> Result<()> {
                             response,
                             |params, result| {
                                 for (i, item) in params.items.iter().enumerate() {
-                                    // TODO: Handle scope_uri though rust-analyzer doesn't specify
-                                    // them currenlty.
-                                    if Some("rust-analyzer")
-                                        == item.section.as_ref().map(|x| x.as_str())
-                                    {
+                                    // NOTE: Semantically we should probably handle scope_uri but
+                                    // rust-analyzer doesn't specify them currenlty.
+                                    if Some("rust-analyzer") == item.section.as_deref() {
                                         if let Some(value) = result.get_mut(i) {
                                             current_version = event_sender.start_reload();
                                             modify_config(value, scripts.projects())
@@ -178,9 +142,10 @@ fn main() -> Result<()> {
                             notification,
                             |params| scripts.deregister_if_registered(&params.text_document.uri),
                         );
+                        // TODO: Only if checkOnSave is enabled?
                         handle_notification::<notification::DidSaveTextDocument>(
                             notification,
-                            |params| scripts.saved(&params.text_document.uri),
+                            |params| scripts.queue_refresh(&params.text_document.uri),
                         );
                     }
                 }
@@ -191,6 +156,7 @@ fn main() -> Result<()> {
                 match &mut message {
                     Message::Request(ref mut request) => {
                         requests_from_server.insert(request.id.clone(), request.clone());
+                        // NOTE: Seems to be working without this.
                         // handle_request::<request::RegisterCapability>(request, |params| {
                         //     for registration in params.registrations.iter_mut() {
                         //         if registration.method == notification::DidSaveTextDocument::METHOD
@@ -225,33 +191,7 @@ fn main() -> Result<()> {
                         // });
                     }
                     Message::Response(_response) => {}
-                    Message::Notification(notification) => {
-                        handle_notification::<notification::PublishDiagnostics>(
-                            notification,
-                            |params| {
-                                rewrite_project_uri_to_script_uri(&scripts, &mut params.uri);
-                                params.diagnostics.iter_mut().for_each(|diagnostic| {
-                                    diagnostic.code_description.iter_mut().for_each(|desc| {
-                                        rewrite_project_uri_to_script_uri(&scripts, &mut desc.href)
-                                    });
-                                    diagnostic
-                                        .related_information
-                                        .iter_mut()
-                                        .flat_map(|v| v.iter_mut())
-                                        .for_each(|info| {
-                                            rewrite_project_uri_to_script_uri(
-                                                &scripts,
-                                                &mut info.location.uri,
-                                            )
-                                        });
-                                });
-                                eprintln!(
-                                    "Rewritten diagnostics: {}",
-                                    serde_json::to_string(&params).unwrap()
-                                );
-                            },
-                        );
-                    }
+                    Message::Notification(_notification) => {}
                 }
                 client.sender.send(message).wrap_err("client stopped")?;
             }
@@ -262,7 +202,6 @@ fn main() -> Result<()> {
                 if dirty_version < current_version {
                     continue;
                 }
-                use lsp_types::notification::Notification;
                 let config = lsp_types::DidChangeConfigurationParams {
                     settings: Default::default(),
                 };

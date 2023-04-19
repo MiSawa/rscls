@@ -27,7 +27,7 @@ pub struct EventSender {
 impl EventSender {
     fn new(sender: SyncSender<Event>) -> Self {
         Self {
-            sender: sender.into(),
+            sender,
             version: Arc::new(AtomicUsize::new(0)),
         }
     }
