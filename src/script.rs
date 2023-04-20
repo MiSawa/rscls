@@ -12,7 +12,7 @@ use eyre::{ensure, eyre, Result, WrapErr as _};
 use path_absolutize::Absolutize as _;
 use project_model::Sysroot;
 use serde::Serialize;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use crate::event::EventSender;
 
