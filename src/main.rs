@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fs::OpenOptions, path::PathBuf};
+use std::{collections::HashMap, fs::OpenOptions, io::Write, path::PathBuf};
 
 use clap::Parser;
 use eyre::{eyre, Result, WrapErr as _};
@@ -57,7 +57,7 @@ fn init_tracing_subscriber(args: &Args) {
             .unwrap();
         fmt.with_writer(file).init();
     } else {
-        fmt.with_writer(std::io::stderr).init();
+        fmt.with_writer(|| std::io::stderr().lock()).init();
     }
 }
 
@@ -90,7 +90,7 @@ fn main() -> Result<()> {
 
     let mut scripts = Scripts::new(event_sender.clone(), args.rust_script)?;
     let mut requests_from_server = HashMap::new();
-    let mut current_version = event_sender.current_version();
+    let mut no_need_reload_version = event_sender.current_version();
     for event in event_receiver.into_iter() {
         match event {
             event::Event::ClientToServer(mut message) => {
@@ -101,7 +101,7 @@ fn main() -> Result<()> {
                             let opts = params
                                 .initialization_options
                                 .get_or_insert_with(|| json!({}));
-                            current_version = event_sender.start_reload();
+                            no_need_reload_version = event_sender.start_reload();
                             modify_config(opts, scripts.projects())
                         });
                         // TODO: More, especially rust-analyzer extra methods.
@@ -120,7 +120,7 @@ fn main() -> Result<()> {
                                     // rust-analyzer doesn't specify them currenlty.
                                     if Some("rust-analyzer") == item.section.as_deref() {
                                         if let Some(value) = result.get_mut(i) {
-                                            current_version = event_sender.start_reload();
+                                            no_need_reload_version = event_sender.start_reload();
                                             modify_config(value, scripts.projects())
                                         }
                                     }
@@ -196,10 +196,10 @@ fn main() -> Result<()> {
                 client.sender.send(message).wrap_err("client stopped")?;
             }
             event::Event::ServerLog(line) => {
-                eprintln!("{line}");
+                writeln!(std::io::stderr().lock(), "{line}").unwrap();
             }
             event::Event::NeedReload(dirty_version) => {
-                if dirty_version < current_version {
+                if dirty_version < no_need_reload_version {
                     continue;
                 }
                 let config = lsp_types::DidChangeConfigurationParams {
@@ -210,6 +210,7 @@ fn main() -> Result<()> {
                     config,
                 ));
                 server.sender.send(message).wrap_err("server stopped")?;
+                no_need_reload_version = dirty_version;
             }
         }
     }
