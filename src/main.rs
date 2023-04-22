@@ -20,11 +20,10 @@ use crate::{
 mod client;
 mod event;
 mod handler;
+mod lsp_extra;
 mod script;
 mod server;
 mod verbosity;
-
-// TODO: Support --port (TCP socket) and --pipe (socket file)
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -104,7 +103,12 @@ fn main() -> Result<()> {
                             no_need_reload_version = event_sender.start_reload();
                             modify_config(opts, scripts.projects())
                         });
-                        // TODO: More, especially rust-analyzer extra methods.
+                        handle_request::<lsp_extra::ReloadWorkspace>(request, |_params| {
+                            // TODO: Ideally we should wait for this to finish and then send
+                            // ReloadWorkspace request.
+                            scripts.queue_refresh_all();
+                        });
+                        // TODO: Other ones
                     }
                     Message::Response(ref mut response) => {
                         let request = requests_from_server
@@ -156,39 +160,6 @@ fn main() -> Result<()> {
                 match &mut message {
                     Message::Request(ref mut request) => {
                         requests_from_server.insert(request.id.clone(), request.clone());
-                        // NOTE: Seems to be working without this.
-                        // handle_request::<request::RegisterCapability>(request, |params| {
-                        //     for registration in params.registrations.iter_mut() {
-                        //         if registration.method == notification::DidSaveTextDocument::METHOD
-                        //         {
-                        //             if let Some(value) = registration.register_options.as_mut() {
-                        //                 if let Ok(mut options) = serde_json::from_value::<
-                        //                     lsp_types::TextDocumentRegistrationOptions,
-                        //                 >(
-                        //                     value.clone()
-                        //                 ) {
-                        //                     if let Some(selectors) =
-                        //                         options.document_selector.as_mut()
-                        //                     {
-                        //                         if selectors.iter().any(|selector| {
-                        //                             selector.pattern.as_ref().map(|x| x.as_str())
-                        //                                 == Some("**/*.rs")
-                        //                         }) {
-                        //                             selectors.push(lsp_types::DocumentFilter {
-                        //                                 language: None,
-                        //                                 scheme: None,
-                        //                                 pattern: Some("**/*.ers".into()),
-                        //                             });
-                        //                         }
-                        //                     }
-                        //                     if let Ok(new_value) = serde_json::to_value(options) {
-                        //                         *value = new_value;
-                        //                     }
-                        //                 }
-                        //             }
-                        //         }
-                        //     }
-                        // });
                     }
                     Message::Response(_response) => {}
                     Message::Notification(_notification) => {}
@@ -206,7 +177,7 @@ fn main() -> Result<()> {
                     settings: Default::default(),
                 };
                 let message = Message::Notification(lsp_server::Notification::new(
-                    lsp_types::notification::DidChangeConfiguration::METHOD.to_owned(),
+                    notification::DidChangeConfiguration::METHOD.to_owned(),
                     config,
                 ));
                 server.sender.send(message).wrap_err("server stopped")?;

@@ -96,9 +96,7 @@ impl Scripts {
                 let script = entry.insert(Arc::new(Script::new(file, self.rust_script.clone())));
                 let sender = self.event_sender.clone();
                 sender.mark_need_reload();
-                script.queue_refresh(move || {
-                    sender.mark_need_reload();
-                })
+                script.queue_refresh(move || sender.mark_need_reload())
             }
         }
     }
@@ -109,13 +107,18 @@ impl Scripts {
         }
     }
 
-    pub fn queue_refresh(&mut self, uri: &lsp_types::Url) {
-        if let Some(script) = self.scripts.get_mut(uri) {
+    pub fn queue_refresh(&self, uri: &lsp_types::Url) {
+        if let Some(script) = self.scripts.get(uri) {
             let sender = self.event_sender.clone();
-            script.queue_refresh(move || {
-                sender.mark_need_reload();
-            })
+            script.queue_refresh(move || sender.mark_need_reload())
         }
+    }
+
+    pub fn queue_refresh_all(&self) {
+        self.scripts.values().for_each(|script| {
+            let sender = self.event_sender.clone();
+            script.queue_refresh(move || sender.mark_need_reload())
+        });
     }
 
     pub fn projects(&self) -> Vec<Value> {
