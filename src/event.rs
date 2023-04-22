@@ -1,14 +1,15 @@
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
-    mpsc::{sync_channel, Receiver, SendError, SyncSender},
     Arc,
 };
 
 use lsp_server::Message;
+use tokio::sync::mpsc::{error::SendError, unbounded_channel, UnboundedReceiver, UnboundedSender};
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Version(usize);
 
+#[derive(Debug)]
 pub enum Event {
     ClientToServer(Message),
     ServerToClient(Message),
@@ -16,16 +17,16 @@ pub enum Event {
     NeedReload(Version),
 }
 
-pub type EventReceiver = Receiver<Event>;
+pub type EventReceiver = UnboundedReceiver<Event>;
 
 #[derive(Clone)]
 pub struct EventSender {
-    sender: SyncSender<Event>,
+    sender: UnboundedSender<Event>,
     version: Arc<AtomicUsize>,
 }
 
 impl EventSender {
-    fn new(sender: SyncSender<Event>) -> Self {
+    fn new(sender: UnboundedSender<Event>) -> Self {
         Self {
             sender,
             version: Arc::new(AtomicUsize::new(0)),
@@ -52,6 +53,6 @@ impl EventSender {
 }
 
 pub fn new_event_bus() -> (EventSender, EventReceiver) {
-    let (sender, receiver) = sync_channel(256);
+    let (sender, receiver) = unbounded_channel();
     (EventSender::new(sender), receiver)
 }

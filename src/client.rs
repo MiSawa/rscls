@@ -1,21 +1,26 @@
-use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
+use std::io::Write;
 
 use eyre::{Context as _, Result};
 use lsp_server::Message;
+use tokio::{
+    spawn,
+    sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
+    task::{spawn_blocking, JoinHandle},
+};
 use tracing::instrument;
 
 use crate::event::{Event, EventSender};
 
 pub struct Client {
-    pub sender: SyncSender<Message>,
-    _handles: [std::thread::JoinHandle<Result<()>>; 2],
+    pub sender: UnboundedSender<Message>,
+    _handles: [JoinHandle<Result<()>>; 2],
 }
 
 impl Client {
     pub fn stdio(event_sender: EventSender) -> Self {
-        let (sender, sender_rcv) = sync_channel(0);
-        let handle1 = std::thread::spawn(|| redirect_stdin(event_sender));
-        let handle2 = std::thread::spawn(|| redirect_stdout(sender_rcv));
+        let (sender, sender_rcv) = unbounded_channel();
+        let handle1 = spawn_blocking(|| redirect_stdin(event_sender));
+        let handle2 = spawn(redirect_stdout(sender_rcv));
         // TODO: Do something with handles
         Self {
             sender,
@@ -42,10 +47,14 @@ fn redirect_stdin(sender: EventSender) -> Result<()> {
 }
 
 #[instrument(skip_all)]
-fn redirect_stdout(receiver: Receiver<Message>) -> Result<()> {
-    let mut stdout = std::io::stdout().lock();
-    receiver
-        .into_iter()
-        .try_for_each(|it| it.write(&mut stdout))
-        .wrap_err("Failed to write message to client (stdout)")
+async fn redirect_stdout(mut receiver: UnboundedReceiver<Message>) -> Result<()> {
+    while let Some(message) = receiver.recv().await {
+        let mut out = std::io::stdout().lock();
+        message
+            .write(&mut out)
+            .wrap_err("Failed to write message to client (stdout)")?;
+        out.flush()
+            .wrap_err("Failed to flush message to client (stdout)")?;
+    }
+    Ok(())
 }

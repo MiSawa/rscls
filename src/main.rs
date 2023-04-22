@@ -75,13 +75,14 @@ fn modify_config(opts: &mut Value, mut rust_projects: Vec<Value>) {
     }
 }
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     let args = Args::parse();
     init_tracing_subscriber(&args);
 
     tracing::debug!(?args);
 
-    let (event_sender, event_receiver) = event::new_event_bus();
+    let (event_sender, mut event_receiver) = event::new_event_bus();
 
     let client = Client::stdio(event_sender.clone());
     let server = Server::spawn(event_sender.clone(), args.rust_analyzer)
@@ -90,7 +91,7 @@ fn main() -> Result<()> {
     let mut scripts = Scripts::new(event_sender.clone(), args.rust_script)?;
     let mut requests_from_server = HashMap::new();
     let mut no_need_reload_version = event_sender.current_version();
-    for event in event_receiver.into_iter() {
+    while let Some(event) = event_receiver.recv().await {
         match event {
             event::Event::ClientToServer(mut message) => {
                 tracing::debug!(?message, "Message from client");
@@ -185,5 +186,6 @@ fn main() -> Result<()> {
             }
         }
     }
+    tracing::debug!("No more events, quitting...");
     Ok(())
 }
