@@ -12,12 +12,13 @@ use verbosity::Verbosity;
 
 use crate::{
     client::Client,
-    handler::{handle_notification, handle_request, handle_response},
+    handler::{handle_notification, handle_request, handle_response, Move},
     script::Scripts,
     server::Server,
 };
 
 mod client;
+mod codec;
 mod event;
 mod handler;
 mod lsp_extra;
@@ -92,23 +93,29 @@ async fn main() -> Result<()> {
     let mut requests_from_server = HashMap::new();
     let mut no_need_reload_version = event_sender.current_version();
     while let Some(event) = event_receiver.recv().await {
+        // Need async non-move closure https://github.com/rust-lang/rust/issues/62290
         match event {
             event::Event::ClientToServer(mut message) => {
                 tracing::debug!(?message, "Message from client");
                 match &mut message {
                     Message::Request(ref mut request) => {
-                        handle_request::<request::Initialize>(request, |params| {
-                            let opts = params
-                                .initialization_options
-                                .get_or_insert_with(|| json!({}));
-                            no_need_reload_version = event_sender.start_reload();
-                            modify_config(opts, scripts.projects())
-                        });
-                        handle_request::<lsp_extra::ReloadWorkspace>(request, |_params| {
-                            // TODO: Ideally we should wait for this to finish and then send
-                            // ReloadWorkspace request.
-                            scripts.queue_refresh_all();
-                        });
+                        handle_request::<request::Initialize, _>(
+                            request,
+                            |Move(mut params)| async {
+                                let opts = params
+                                    .initialization_options
+                                    .get_or_insert_with(|| json!({}));
+                                no_need_reload_version = event_sender.start_reload();
+                                modify_config(opts, scripts.projects().await);
+                                params
+                            },
+                        )
+                        .await;
+                        handle_request::<lsp_extra::ReloadWorkspace, _>(request, |params| async {
+                            scripts.queue_refresh_all().await;
+                            params.moved()
+                        })
+                        .await;
                         // TODO: Other ones
                     }
                     Message::Response(ref mut response) => {
@@ -116,42 +123,54 @@ async fn main() -> Result<()> {
                             .remove(&response.id)
                             .ok_or(eyre!("invalid id received from client"))?;
 
-                        handle_response::<request::WorkspaceConfiguration>(
+                        handle_response::<request::WorkspaceConfiguration, _>(
                             &request,
                             response,
-                            |params, result| {
-                                for (i, item) in params.items.iter().enumerate() {
+                            |Move(params), Move(mut result)| async {
+                                for (i, item) in params.items.into_iter().enumerate() {
                                     // NOTE: Semantically we should probably handle scope_uri but
                                     // rust-analyzer doesn't specify them currenlty.
                                     if Some("rust-analyzer") == item.section.as_deref() {
                                         if let Some(value) = result.get_mut(i) {
                                             no_need_reload_version = event_sender.start_reload();
-                                            modify_config(value, scripts.projects())
+                                            modify_config(value, scripts.projects().await)
                                         }
                                     }
                                 }
+                                result
                             },
-                        );
+                        )
+                        .await;
                     }
                     Message::Notification(ref mut notification) => {
-                        handle_notification::<notification::DidOpenTextDocument>(
+                        handle_notification::<notification::DidOpenTextDocument, _>(
                             notification,
-                            |params| {
+                            |Move(mut params)| async {
                                 if &params.text_document.language_id == "rust-script" {
-                                    scripts.register(params.text_document.uri.clone());
+                                    scripts.register(params.text_document.uri.clone()).await;
                                     params.text_document.language_id = "rust".to_owned();
                                 }
+                                params
                             },
-                        );
-                        handle_notification::<notification::DidCloseTextDocument>(
+                        )
+                        .await;
+                        handle_notification::<notification::DidCloseTextDocument, _>(
                             notification,
-                            |params| scripts.deregister_if_registered(&params.text_document.uri),
-                        );
+                            |Move(params)| async {
+                                scripts.deregister_if_registered(&params.text_document.uri);
+                                params
+                            },
+                        )
+                        .await;
                         // TODO: Only if checkOnSave is enabled?
-                        handle_notification::<notification::DidSaveTextDocument>(
+                        handle_notification::<notification::DidSaveTextDocument, _>(
                             notification,
-                            |params| scripts.queue_refresh(&params.text_document.uri),
-                        );
+                            |Move(params)| async {
+                                scripts.queue_refresh(&params.text_document.uri).await;
+                                params
+                            },
+                        )
+                        .await;
                     }
                 }
                 server.sender.send(message).wrap_err("server stopped")?;
@@ -168,7 +187,11 @@ async fn main() -> Result<()> {
                 client.sender.send(message).wrap_err("client stopped")?;
             }
             event::Event::ServerLog(line) => {
-                writeln!(std::io::stderr().lock(), "{line}").unwrap();
+                tokio::task::spawn_blocking(move || {
+                    writeln!(std::io::stderr().lock(), "{line}").unwrap()
+                })
+                .await
+                .unwrap();
             }
             event::Event::NeedReload(dirty_version) => {
                 if dirty_version < no_need_reload_version {

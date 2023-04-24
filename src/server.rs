@@ -1,17 +1,22 @@
-use std::{ffi::OsStr, io::Cursor};
+use std::ffi::OsStr;
 
 use eyre::{Context as _, Result};
+use futures::{sink::SinkExt as _, stream::TryStreamExt as _};
 use lsp_server::Message;
 use tokio::{
-    io::{AsyncBufReadExt, AsyncRead, AsyncWriteExt, BufReader, BufWriter},
+    io::{AsyncBufReadExt as _, BufReader},
     process::{Child, ChildStderr, ChildStdin, ChildStdout},
     spawn,
     sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
     task::JoinHandle,
 };
+use tokio_util::codec::{FramedRead, FramedWrite};
 use tracing::instrument;
 
-use crate::event::{Event, EventSender};
+use crate::{
+    codec::MessageCodec,
+    event::{Event, EventSender},
+};
 
 pub struct Server {
     #[allow(unused)]
@@ -53,112 +58,42 @@ impl Server {
 async fn redirect_log(sender: EventSender, child_log: ChildStderr) -> Result<()> {
     let mut lines = BufReader::new(child_log).lines();
     while let Some(line) = lines.next_line().await? {
-        sender.send(Event::ServerLog(line)).ok();
+        if sender.send(Event::ServerLog(line)).is_err() {
+            break;
+        }
     }
     Ok(())
 }
 
 #[instrument(skip_all)]
 async fn redirect_send(mut receiver: UnboundedReceiver<Message>, stdin: ChildStdin) -> Result<()> {
-    let mut writer = BufWriter::new(stdin);
+    let mut write = FramedWrite::new(stdin, MessageCodec);
     while let Some(msg) = receiver.recv().await {
-        let mut buf = Vec::new();
-        msg.write(&mut buf)
-            .wrap_err("failed to serialize message")?;
-        writer
-            .write_all(&buf)
+        use lsp_types::notification::{Exit, Notification as _};
+        let need_exit = matches!(&msg, Message::Notification(notification) if notification.method == Exit::METHOD);
+        write
+            .send(msg)
             .await
-            .wrap_err("failed to write message to server")?;
-        writer
-            .flush()
-            .await
-            .wrap_err("failed to write message to server")?;
+            .wrap_err("Failed to write message to server")?;
+        if need_exit {
+            tracing::info!("Exit loop sending message to server");
+            break;
+        }
     }
     Ok(())
 }
 
 #[instrument(skip_all)]
 async fn redirect_receive(sender: EventSender, stdout: ChildStdout) -> Result<()> {
-    let mut reader = SyncRead::new(stdout);
-    while let Some(msg) =
-        Message::read(&mut reader).wrap_err("failed to read message from server")?
+    let mut read = FramedRead::new(stdout, MessageCodec);
+    while let Some(msg) = read
+        .try_next()
+        .await
+        .wrap_err("Failed to read message from server")?
     {
-        sender.send(Event::ServerToClient(msg)).unwrap();
+        if sender.send(Event::ServerToClient(msg)).is_err() {
+            break;
+        }
     }
     Ok(())
-}
-
-struct SyncRead {
-    current: Cursor<Vec<u8>>,
-    receiver: std::sync::mpsc::Receiver<std::io::Result<Cursor<Vec<u8>>>>,
-    _handle: JoinHandle<Result<()>>,
-}
-impl SyncRead {
-    fn new(mut inner: impl 'static + Send + Unpin + AsyncRead) -> Self {
-        let (sender, receiver) = std::sync::mpsc::sync_channel(5);
-        let handle = spawn(async move {
-            use tokio::io::AsyncReadExt;
-            loop {
-                let mut buf = vec![0; 2048];
-                let v = inner.read(&mut buf).await.map(|n| {
-                    buf.truncate(n);
-                    Cursor::new(buf)
-                });
-                sender.send(v)?;
-            }
-        });
-        Self {
-            current: Cursor::new(vec![]),
-            receiver,
-            _handle: handle,
-        }
-    }
-
-    fn buffer_is_empty(&self) -> bool {
-        // TODO: assert!(self.current.is_empty()); when it's stabilized
-        self.current.get_ref().len() as u64 <= self.current.position()
-    }
-    fn renew_buffer(&mut self) -> std::io::Result<bool> {
-        assert!(self.buffer_is_empty());
-        match self.receiver.recv() {
-            Ok(Ok(cursor)) => {
-                self.current = cursor;
-                Ok(true)
-            }
-            Ok(Err(e)) => Err(e),
-            Err(_) => Ok(false),
-        }
-    }
-}
-
-impl std::io::Read for SyncRead {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        loop {
-            let n = self
-                .current
-                .read(buf)
-                .expect("read from cursor shouldn't fail");
-            if n != 0 {
-                return Ok(n);
-            }
-            if !self.renew_buffer()? {
-                return Ok(0);
-            }
-        }
-    }
-}
-
-impl std::io::BufRead for SyncRead {
-    fn fill_buf(&mut self) -> std::io::Result<&[u8]> {
-        while self.buffer_is_empty() {
-            if !self.renew_buffer()? {
-                return Ok(&[]);
-            }
-        }
-        std::io::BufRead::fill_buf(&mut self.current)
-    }
-
-    fn consume(&mut self, amt: usize) {
-        std::io::BufRead::consume(&mut self.current, amt);
-    }
 }

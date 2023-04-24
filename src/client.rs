@@ -1,15 +1,18 @@
-use std::io::Write;
-
 use eyre::{Context as _, Result};
+use futures::{SinkExt as _, TryStreamExt as _};
 use lsp_server::Message;
 use tokio::{
     spawn,
     sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
-    task::{spawn_blocking, JoinHandle},
+    task::JoinHandle,
 };
+use tokio_util::codec::{FramedRead, FramedWrite};
 use tracing::instrument;
 
-use crate::event::{Event, EventSender};
+use crate::{
+    codec::MessageCodec,
+    event::{Event, EventSender},
+};
 
 pub struct Client {
     pub sender: UnboundedSender<Message>,
@@ -19,7 +22,7 @@ pub struct Client {
 impl Client {
     pub fn stdio(event_sender: EventSender) -> Self {
         let (sender, sender_rcv) = unbounded_channel();
-        let handle1 = spawn_blocking(|| redirect_stdin(event_sender));
+        let handle1 = spawn(redirect_stdin(event_sender));
         let handle2 = spawn(redirect_stdout(sender_rcv));
         // TODO: Do something with handles
         Self {
@@ -30,10 +33,24 @@ impl Client {
 }
 
 #[instrument(skip_all)]
-fn redirect_stdin(sender: EventSender) -> Result<()> {
-    let mut stdin = std::io::stdin().lock();
-    while let Some(msg) =
-        Message::read(&mut stdin).wrap_err("Failed to read message from client (stdin)")?
+async fn redirect_stdout(mut receiver: UnboundedReceiver<Message>) -> Result<()> {
+    let mut write = FramedWrite::new(tokio::io::stdout(), MessageCodec);
+    while let Some(msg) = receiver.recv().await {
+        write
+            .send(msg)
+            .await
+            .wrap_err("Failed to write message to client (=stdout)")?;
+    }
+    Ok(())
+}
+
+#[instrument(skip_all)]
+async fn redirect_stdin(sender: EventSender) -> Result<()> {
+    let mut read = FramedRead::new(tokio::io::stdin(), MessageCodec);
+    while let Some(msg) = read
+        .try_next()
+        .await
+        .wrap_err("Failed to read message from server")?
     {
         use lsp_types::notification::{Exit, Notification as _};
         let need_exit = matches!(&msg, Message::Notification(notification) if notification.method == Exit::METHOD);
@@ -42,19 +59,6 @@ fn redirect_stdin(sender: EventSender) -> Result<()> {
             tracing::info!("Exit loop receiving message from client");
             break;
         }
-    }
-    Ok(())
-}
-
-#[instrument(skip_all)]
-async fn redirect_stdout(mut receiver: UnboundedReceiver<Message>) -> Result<()> {
-    while let Some(message) = receiver.recv().await {
-        let mut out = std::io::stdout().lock();
-        message
-            .write(&mut out)
-            .wrap_err("Failed to write message to client (stdout)")?;
-        out.flush()
-            .wrap_err("Failed to flush message to client (stdout)")?;
     }
     Ok(())
 }

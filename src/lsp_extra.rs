@@ -1,6 +1,7 @@
 use lsp_types::{notification::Notification, request::Request, TextDocumentIdentifier};
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug)]
 pub enum ReloadWorkspace {}
 impl Request for ReloadWorkspace {
     type Params = ();
@@ -8,6 +9,7 @@ impl Request for ReloadWorkspace {
     const METHOD: &'static str = "rust-analyzer/reloadWorkspace";
 }
 
+#[derive(Debug)]
 pub enum RebuildProcMacros {}
 impl Request for RebuildProcMacros {
     type Params = ();
@@ -15,6 +17,7 @@ impl Request for RebuildProcMacros {
     const METHOD: &'static str = "rust-analyzer/rebuildProcMacros";
 }
 
+#[derive(Debug)]
 pub enum RunFlyCheck {}
 impl Notification for RunFlyCheck {
     type Params = RunFlyCheckParams;

@@ -1,17 +1,21 @@
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
-    process::Command,
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc, Mutex, RwLock,
+        Arc, RwLock,
     },
 };
 
 use eyre::{ensure, eyre, Result, WrapErr as _};
-use once_cell::sync::Lazy;
+use futures::future::JoinAll;
 use path_absolutize::Absolutize as _;
 use serde_json::{json, Value};
+use tokio::{
+    process::Command,
+    spawn,
+    sync::{Mutex, OnceCell},
+};
 
 use crate::event::EventSender;
 
@@ -21,11 +25,11 @@ struct Script {
     fallback_project: Value,
     project: RwLock<Arc<Option<PathBuf>>>,
     need_refresh: AtomicBool,
-    refresh_lock: Mutex<()>,
+    refresh_lock: tokio::sync::Mutex<()>,
 }
 impl Script {
-    fn new(source: PathBuf, rust_script: Arc<PathBuf>) -> Self {
-        let fallback_project = create_default_project(&source);
+    async fn new(source: PathBuf, rust_script: Arc<PathBuf>) -> Self {
+        let fallback_project = create_default_project(&source).await;
         Self {
             source,
             rust_script,
@@ -36,42 +40,43 @@ impl Script {
         }
     }
 
-    fn project(&self) -> Value {
+    async fn project(&self) -> Value {
         let tmp = self.project.read().unwrap().clone();
         if let Some(manifest) = tmp.as_ref() {
-            if manifest.exists() {
+            if tokio::fs::metadata(manifest).await.is_ok() {
                 return serde_json::to_value(manifest).unwrap();
             }
         }
         self.fallback_project.clone()
     }
 
-    fn queue_refresh(self: &Arc<Self>, refreshed: impl FnOnce() + Send + 'static) {
+    async fn queue_refresh(self: &Arc<Self>, refreshed: impl FnOnce() + Send + 'static) {
         let this = self.clone();
         this.need_refresh.store(true, Ordering::SeqCst);
-        std::thread::spawn(move || this.do_refresh(refreshed));
+        this.do_refresh(refreshed).await
     }
 
-    fn do_refresh(self: Arc<Self>, refreshed: impl FnOnce()) {
-        let _guard = self.refresh_lock.lock().unwrap();
+    async fn do_refresh(self: Arc<Self>, refreshed: impl FnOnce()) {
+        let _guard = self.refresh_lock.lock().await;
         if !self.need_refresh.swap(false, Ordering::SeqCst) {
             return;
         }
-        let ret = || -> Result<()> {
-            let project_dir = package_dir(self.rust_script.as_ref(), self.source.as_path())?;
-            let new_project = Some(project_dir.join("Cargo.toml"));
-            let mut project_write = self.project.write().unwrap();
-            if project_write.as_ref() != &new_project {
-                *project_write = new_project.into();
-                tracing::info!(script = ?self.source, "reloaded project");
-                refreshed();
-            } else {
-                tracing::info!(script = ?self.source, "no project diff found");
+        let project_dir = match package_dir(self.rust_script.as_ref(), self.source.as_path()).await
+        {
+            Ok(project_dir) => project_dir,
+            Err(e) => {
+                tracing::error!(script = ?self.source, ?e, "failed to load script as a project");
+                return;
             }
-            Ok(())
-        }();
-        if let Err(e) = ret {
-            tracing::error!(script = ?self.source, ?e, "failed to load script as a project");
+        };
+        let new_project = Some(project_dir.join("Cargo.toml"));
+        let mut project_write = self.project.write().unwrap();
+        if project_write.as_ref() != &new_project {
+            *project_write = new_project.into();
+            tracing::info!(script = ?self.source, "reloaded project");
+            refreshed();
+        } else {
+            tracing::info!(script = ?self.source, "no project diff found");
         }
     }
 }
@@ -90,13 +95,16 @@ impl Scripts {
         })
     }
 
-    pub fn register(&mut self, uri: lsp_types::Url) {
+    pub async fn register(&mut self, uri: lsp_types::Url) {
         if let Ok(file) = uri.to_file_path() {
             if let std::collections::btree_map::Entry::Vacant(entry) = self.scripts.entry(uri) {
-                let script = entry.insert(Arc::new(Script::new(file, self.rust_script.clone())));
+                let script =
+                    entry.insert(Arc::new(Script::new(file, self.rust_script.clone()).await));
                 let sender = self.event_sender.clone();
                 sender.mark_need_reload();
-                script.queue_refresh(move || sender.mark_need_reload())
+                script
+                    .queue_refresh(move || sender.mark_need_reload())
+                    .await
             }
         }
     }
@@ -107,30 +115,43 @@ impl Scripts {
         }
     }
 
-    pub fn queue_refresh(&self, uri: &lsp_types::Url) {
+    pub async fn queue_refresh(&self, uri: &lsp_types::Url) {
         if let Some(script) = self.scripts.get(uri) {
             let sender = self.event_sender.clone();
-            script.queue_refresh(move || sender.mark_need_reload())
+            script
+                .queue_refresh(move || sender.mark_need_reload())
+                .await
         }
     }
 
-    pub fn queue_refresh_all(&self) {
-        self.scripts.values().for_each(|script| {
-            let sender = self.event_sender.clone();
-            script.queue_refresh(move || sender.mark_need_reload())
-        });
+    pub async fn queue_refresh_all(&self) {
+        self.scripts
+            .values()
+            .cloned()
+            .map(|script| {
+                let sender = self.event_sender.clone();
+                spawn(async move {
+                    script
+                        .queue_refresh(move || sender.mark_need_reload())
+                        .await
+                })
+            })
+            .collect::<JoinAll<_>>()
+            .await;
     }
 
-    pub fn projects(&self) -> Vec<Value> {
+    pub async fn projects(&self) -> Vec<Value> {
         self.scripts
             .values()
             .map(|script| script.project())
-            .collect()
+            .collect::<JoinAll<_>>()
+            .await
     }
 }
 
-fn create_default_project(source: &PathBuf) -> Value {
-    static SYSROOT: Lazy<Result<PathBuf>> = Lazy::new(default_sysroot);
+async fn create_default_project(source: &PathBuf) -> Value {
+    static SYSROOT: OnceCell<Result<PathBuf>> = OnceCell::const_new();
+    let sysroot = SYSROOT.get_or_init(default_sysroot).await;
     let mut value = json!({
         "crates": [{
             "root_module": source,
@@ -139,7 +160,7 @@ fn create_default_project(source: &PathBuf) -> Value {
             "is_proc_macro": false,
         }]
     });
-    if let Ok(Ok(sysroot)) = SYSROOT.as_ref().map(serde_json::to_value) {
+    if let Ok(Ok(sysroot)) = sysroot.as_ref().map(serde_json::to_value) {
         value
             .as_object_mut()
             .unwrap()
@@ -148,21 +169,22 @@ fn create_default_project(source: &PathBuf) -> Value {
     value
 }
 
-fn package_dir(rust_script: impl AsRef<Path>, script: impl AsRef<Path>) -> Result<PathBuf> {
+async fn package_dir(rust_script: impl AsRef<Path>, script: impl AsRef<Path>) -> Result<PathBuf> {
     let mut cmd = Command::new(rust_script.as_ref());
     cmd.arg("--package").arg(script.as_ref());
-    run_and_parse_output_as_path(cmd)
+    run_and_parse_output_as_path(cmd).await
 }
 
-fn default_sysroot() -> Result<PathBuf> {
+async fn default_sysroot() -> Result<PathBuf> {
     let mut cmd = Command::new("rustc");
     cmd.args(["--print", "sysroot"]).current_dir("/");
-    run_and_parse_output_as_path(cmd)
+    run_and_parse_output_as_path(cmd).await
 }
 
-fn run_and_parse_output_as_path(mut command: Command) -> Result<PathBuf> {
+async fn run_and_parse_output_as_path(mut command: Command) -> Result<PathBuf> {
     let output = command
         .output()
+        .await
         .wrap_err_with(|| eyre!("failed to run `{command:?}`"))?;
     ensure!(
         output.status.success(),
