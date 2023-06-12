@@ -16,6 +16,7 @@ use tracing::instrument;
 use crate::{
     codec::MessageCodec,
     event::{Event, EventSender},
+    lsp_extra::MessageExt as _,
 };
 
 pub struct Server {
@@ -69,8 +70,7 @@ async fn redirect_log(sender: EventSender, child_log: ChildStderr) -> Result<()>
 async fn redirect_send(mut receiver: UnboundedReceiver<Message>, stdin: ChildStdin) -> Result<()> {
     let mut write = FramedWrite::new(stdin, MessageCodec);
     while let Some(msg) = receiver.recv().await {
-        use lsp_types::notification::{Exit, Notification as _};
-        let need_exit = matches!(&msg, Message::Notification(notification) if notification.method == Exit::METHOD);
+        let need_exit = msg.is_exit();
         write
             .send(msg)
             .await

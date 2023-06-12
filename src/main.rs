@@ -13,6 +13,7 @@ use verbosity::Verbosity;
 use crate::{
     client::Client,
     handler::{handle_notification, handle_request, handle_response, Move},
+    lsp_extra::MessageExt as _,
     script::Scripts,
     server::Server,
 };
@@ -173,7 +174,11 @@ async fn main() -> Result<()> {
                         .await;
                     }
                 }
+                let need_exit = message.is_exit();
                 server.sender.send(message).wrap_err("server stopped")?;
+                if need_exit {
+                    break;
+                }
             }
             event::Event::ServerToClient(mut message) => {
                 tracing::debug!(?message, "Message from server");
