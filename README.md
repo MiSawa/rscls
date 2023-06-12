@@ -11,10 +11,25 @@ Internally, RSCLS spawns an instance of _rust-analyzer_ with no package configur
   - Current implementation doesn't translate file paths nor positions in a file. Since templated rust-scripts are not valid as rust program, we can't handle them directly.
 - Commands may not work properly.
 
+## Install
+```shell
+cargo install rscls
+```
+You can alternatively clone this repository to your local, maybe modify some code and run
+```shell
+cargo install --path path-to-cloned-dir
+```
+to install locally modified version of the code.
+
+## Uninstall
+```shell
+cargo uninstall rscls
+```
+
 ## Example configuration
-Here's an example configuration for [nvim-lspconfig](https://github.com/neovim/nvim-lspconfig). I don't use other editor/IDEs, so please figure them out on your own.
+Here's an example configuration for [nvim-lspconfig](https://github.com/neovim/nvim-lspconfig). I don't use other editor/IDEs, so please figure them out on your own. Pull requests are welcomed!
 ```lua
--- Assumes `autocmd BufEnter *.ers  setlocal filetype=rust-script`
+-- Assumes `autocmd BufEnter *.ers  setlocal filetype=rust-script` or similar
 local lsp_configs = require 'lspconfig.configs'
 if not lsp_configs.rlscls then
     lsp_configs.rlscls = {
@@ -27,12 +42,36 @@ if not lsp_configs.rlscls then
         },
         docs = {
             description = [[
-An awesome documentation here.
+https://github.com/MiSawa/rscls
+
+rscls, a language server for rust-script
 ]],
         }
     }
 end
-lspconfig.rlscls.setup { }
+lspconfig.rlscls.setup {
+    settings = {
+        ['rust-analyzer'] = {
+            imports = {
+                group = {
+                    enable = true,
+                },
+                granularity = {
+                    enforce = true,
+                    group = "crate",
+                },
+            },
+            cargo = {
+                buildScripts = {
+                    enable = true,
+                },
+            },
+            procMacro = {
+                enable = true,
+            }
+        },
+    }
+}
 ```
 
 ## Contribution
