@@ -53,6 +53,9 @@ end
 lspconfig.rlscls.setup {
     settings = {
         ['rust-analyzer'] = {
+            semanticHighlighting = {
+                nonStandardTokens = false,
+            },
             imports = {
                 group = {
                     enable = true,
@@ -69,7 +72,7 @@ lspconfig.rlscls.setup {
             },
             procMacro = {
                 enable = true,
-            }
+            },
         },
     }
 }
