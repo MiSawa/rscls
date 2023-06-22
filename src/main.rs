@@ -1,4 +1,9 @@
-use std::{collections::HashMap, fs::OpenOptions, io::Write, path::PathBuf};
+use std::{
+    collections::{HashMap, HashSet},
+    fs::OpenOptions,
+    io::Write,
+    path::PathBuf,
+};
 
 use clap::Parser;
 use eyre::{eyre, Result, WrapErr as _};
@@ -85,6 +90,13 @@ async fn main() -> Result<()> {
     tracing::debug!(?args);
 
     let (event_sender, mut event_receiver) = event::new_event_bus();
+    let language_ids = {
+        let mut language_ids = HashSet::new();
+        language_ids.insert("rustscript");
+        language_ids.insert("rust-script");
+        language_ids.insert("rust_script");
+        language_ids
+    };
 
     let client = Client::stdio(event_sender.clone());
     let server = Server::spawn(event_sender.clone(), args.rust_analyzer)
@@ -147,7 +159,8 @@ async fn main() -> Result<()> {
                         handle_notification::<notification::DidOpenTextDocument, _>(
                             notification,
                             |Move(mut params)| async {
-                                if &params.text_document.language_id == "rust-script" {
+                                if language_ids.contains(params.text_document.language_id.as_str())
+                                {
                                     scripts.register(params.text_document.uri.clone()).await;
                                     params.text_document.language_id = "rust".to_owned();
                                 }

@@ -4,7 +4,7 @@
 A [language server](https://microsoft.github.io/language-server-protocol/) for [rust-script](https://rust-script.org/).
 
 ## How it works
-Internally, RSCLS spawns an instance of _rust-analyzer_ with no package configuration. Every time RSCLS receives `textDocument/didOpen` request from the client with `rust-script` language id, it changes the language id to `rust`, run _rust-script_ to obtain the project directory and setup `linkedProject` for the project.
+Internally, RSCLS spawns an instance of _rust-analyzer_ with no package configuration. Every time RSCLS receives `textDocument/didOpen` request from the client with `rust-script`, `rust_script` or `rustscript` language id, it changes the language id to `rust`, run _rust-script_ to obtain the project directory and setup `linkedProject` for the project.
 
 ## What doesn't work
 - Does NOT work on templated rust-scripts, including those need `main` function added.
@@ -53,9 +53,6 @@ end
 lspconfig.rlscls.setup {
     settings = {
         ['rust-analyzer'] = {
-            semanticHighlighting = {
-                nonStandardTokens = false,
-            },
             imports = {
                 group = {
                     enable = true,
