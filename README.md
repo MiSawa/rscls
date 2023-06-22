@@ -30,13 +30,13 @@ cargo uninstall rscls
 ## Example configuration
 Here's an example configuration for [nvim-lspconfig](https://github.com/neovim/nvim-lspconfig). I don't use other editor/IDEs, so please figure them out on your own. Pull requests are welcomed!
 ```lua
--- Assumes `autocmd BufEnter *.ers  setlocal filetype=rust-script` or similar
+-- Assumes `autocmd BufEnter *.ers  setlocal filetype=rustscript` or similar
 local lsp_configs = require 'lspconfig.configs'
 if not lsp_configs.rlscls then
     lsp_configs.rlscls = {
         default_config = {
             cmd = { 'rscls' },
-            filetypes = { 'rust-script' },
+            filetypes = { 'rustscript' },
             root_dir = function(fname)
                 return lspconfig.util.path.dirname(fname)
             end,
