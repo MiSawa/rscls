@@ -7,7 +7,7 @@ description = "A language server for rust-script"
 license = "MIT/Apache-2.0"
 repository = "https://github.com/MiSawa/rscls"
 readme = "README.md"
-exclude = [".github", "release.toml"]
+exclude = [".github", "release.toml", "flake.nix", "flake.lock"]
 
 [dependencies]
 bytes = "1.4.0"
