@@ -1,4 +1,4 @@
-pub use clap_verbosity_flag::{ErrorLevel, InfoLevel, LogLevel, WarnLevel};
+pub use clap_verbosity_flag::{ErrorLevel, LogLevel, WarnLevel};
 
 #[derive(clap::Args, Debug, Clone)]
 #[group(skip)]

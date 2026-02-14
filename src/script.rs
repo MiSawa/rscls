@@ -125,6 +125,8 @@ impl Scripts {
     }
 
     pub async fn queue_refresh_all(&self) {
+        // https://github.com/rust-lang/rust-clippy/issues/16012
+        #[allow(clippy::redundant_iter_cloned)]
         self.scripts
             .values()
             .cloned()

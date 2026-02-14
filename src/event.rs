@@ -33,8 +33,8 @@ impl EventSender {
         }
     }
 
-    pub fn send(&self, event: Event) -> Result<(), SendError<Event>> {
-        self.sender.send(event)
+    pub fn send(&self, event: Event) -> Result<(), Box<SendError<Event>>> {
+        self.sender.send(event).map_err(Box::new)
     }
 
     pub fn mark_need_reload(&self) {
