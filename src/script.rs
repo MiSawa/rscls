@@ -28,8 +28,8 @@ struct Script {
     refresh_lock: tokio::sync::Mutex<()>,
 }
 impl Script {
-    async fn new(source: PathBuf, rust_script: Arc<PathBuf>) -> Self {
-        let fallback_project = create_default_project(&source).await;
+    async fn new(source: PathBuf, rustc: &PathBuf, rust_script: Arc<PathBuf>) -> Self {
+        let fallback_project = create_default_project(&source, rustc).await;
         Self {
             source,
             rust_script,
@@ -83,13 +83,15 @@ impl Script {
 
 pub struct Scripts {
     event_sender: EventSender,
+    rustc: PathBuf,
     rust_script: Arc<PathBuf>,
     scripts: BTreeMap<lsp_types::Url, Arc<Script>>,
 }
 impl Scripts {
-    pub fn new(event_sender: EventSender, rust_script: PathBuf) -> Result<Self> {
+    pub fn new(event_sender: EventSender, rustc: PathBuf, rust_script: PathBuf) -> Result<Self> {
         Ok(Self {
             event_sender,
+            rustc,
             rust_script: rust_script.into(),
             scripts: BTreeMap::new(),
         })
@@ -98,8 +100,9 @@ impl Scripts {
     pub async fn register(&mut self, uri: lsp_types::Url) {
         if let Ok(file) = uri.to_file_path() {
             if let std::collections::btree_map::Entry::Vacant(entry) = self.scripts.entry(uri) {
-                let script =
-                    entry.insert(Arc::new(Script::new(file, self.rust_script.clone()).await));
+                let script = entry.insert(Arc::new(
+                    Script::new(file, &self.rustc, self.rust_script.clone()).await,
+                ));
                 let sender = self.event_sender.clone();
                 sender.mark_need_reload();
                 script
@@ -151,9 +154,9 @@ impl Scripts {
     }
 }
 
-async fn create_default_project(source: &PathBuf) -> Value {
+async fn create_default_project(source: &PathBuf, rustc: &PathBuf) -> Value {
     static SYSROOT: OnceCell<Result<PathBuf>> = OnceCell::const_new();
-    let sysroot = SYSROOT.get_or_init(default_sysroot).await;
+    let sysroot = SYSROOT.get_or_init(|| default_sysroot(rustc)).await;
     let mut value = json!({
         "crates": [{
             "root_module": source,
@@ -177,8 +180,8 @@ async fn package_dir(rust_script: impl AsRef<Path>, script: impl AsRef<Path>) ->
     run_and_parse_output_as_path(cmd).await
 }
 
-async fn default_sysroot() -> Result<PathBuf> {
-    let mut cmd = Command::new("rustc");
+async fn default_sysroot(rustc: &PathBuf) -> Result<PathBuf> {
+    let mut cmd = Command::new(rustc);
     cmd.args(["--print", "sysroot"]).current_dir("/");
     run_and_parse_output_as_path(cmd).await
 }

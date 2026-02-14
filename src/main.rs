@@ -43,6 +43,10 @@ struct Args {
     #[arg(long, default_value = "rust-analyzer")]
     rust_analyzer: PathBuf,
 
+    /// The rustc executable path, used to identify sysroot.
+    #[arg(long, default_value = "rustc")]
+    rustc: PathBuf,
+
     /// The file to use as the log output instead of stderr.
     #[arg(short('o'), long)]
     log_file: Option<PathBuf>,
@@ -102,7 +106,7 @@ async fn main() -> Result<()> {
     let server = Server::spawn(event_sender.clone(), args.rust_analyzer)
         .wrap_err("failed to spawn server")?;
 
-    let mut scripts = Scripts::new(event_sender.clone(), args.rust_script)?;
+    let mut scripts = Scripts::new(event_sender.clone(), args.rustc, args.rust_script)?;
     let mut requests_from_server = HashMap::new();
     let mut no_need_reload_version = event_sender.current_version();
     while let Some(event) = event_receiver.recv().await {
