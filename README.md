@@ -59,6 +59,22 @@ return {
     local fname = vim.api.nvim_buf_get_name(bufnr)
     on_dir(vim.fs.dirname(fname))
   end,
+  -- This before_init is not strictly necessary for rscls to function,
+  -- but may speed up the startup time of the language server.
+  -- See: https://github.com/MiSawa/rscls/issues/4
+  before_init = function(_params, config)
+    local entries = vim
+      .iter(vim.fs.dir(config.root_dir))
+      :map(function(path, _type)
+        return path
+      end)
+      :totable()
+    ---@diagnostic disable-next-line: inject-field
+    config.settings['rust-analyzer'].files = {
+      exclude = entries,
+      watcherExclude = entries,
+    }
+  end,
   settings = {
     -- configurations for the backing rust-analyzer
     ['rust-analyzer'] = {
