@@ -203,7 +203,18 @@ async fn main() -> Result<()> {
                     Message::Request(ref mut request) => {
                         requests_from_server.insert(request.id.clone(), request.clone());
                     }
-                    Message::Response(_response) => {}
+                    Message::Response(ref mut response) => {
+                        // The lsp-server crate deserializes JSON `"result": null`
+                        // as `None` (standard serde behavior for Option<Value>),
+                        // then `skip_serializing_if = "Option::is_none"` omits the
+                        // field on re-serialization. This produces responses with
+                        // neither `result` nor `error`, violating the JSON-RPC 2.0
+                        // spec and causing INVALID_SERVER_MESSAGE errors in clients
+                        // that strictly validate (e.g. Neovim >= 0.12).
+                        if response.result.is_none() && response.error.is_none() {
+                            response.result = Some(serde_json::Value::Null);
+                        }
+                    }
                     Message::Notification(_notification) => {}
                 }
                 client.sender.send(message).wrap_err("client stopped")?;
